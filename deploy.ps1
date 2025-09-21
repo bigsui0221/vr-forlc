@@ -11,7 +11,7 @@ param(
 
 # 显示帮助信息
 if ($Help) {
-    Write-Host "
+    Write-Host @"
 利川水库VR监测系统部署脚本
 
 用法: .\deploy.ps1 [参数]
@@ -26,7 +26,7 @@ if ($Help) {
 示例:
   .\deploy.ps1 -Port 1999 -IPAddress 192.168.150.253 -WebServer IIS
   .\deploy.ps1 -Port 8080 -IPAddress 0.0.0.0 -WebServer Nginx -SkipDependencies
-"
+"@
     exit 0
 }
 
@@ -70,10 +70,16 @@ function Test-Software {
 function Install-Chocolatey {
     if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
         Write-Log "正在安装Chocolatey..."
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        Write-Log "Chocolatey安装完成" "Success"
+        try {
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            Write-Log "Chocolatey安装完成" "Success"
+        }
+        catch {
+            Write-Log "Chocolatey安装失败: $($_.Exception.Message)" "Error"
+            throw
+        }
     } else {
         Write-Log "Chocolatey已安装" "Success"
     }
@@ -83,10 +89,16 @@ function Install-Chocolatey {
 function Install-NodeJS {
     if (!(Test-Software "Node.js" "node")) {
         Write-Log "正在安装Node.js..."
-        choco install nodejs -y
-        # 刷新环境变量
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-        Write-Log "Node.js安装完成" "Success"
+        try {
+            choco install nodejs -y
+            # 刷新环境变量
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            Write-Log "Node.js安装完成" "Success"
+        }
+        catch {
+            Write-Log "Node.js安装失败: $($_.Exception.Message)" "Error"
+            throw
+        }
     }
 }
 
@@ -94,24 +106,36 @@ function Install-NodeJS {
 function Install-Pnpm {
     if (!(Test-Software "pnpm" "pnpm")) {
         Write-Log "正在安装pnpm..."
-        npm install -g pnpm
-        Write-Log "pnpm安装完成" "Success"
+        try {
+            npm install -g pnpm
+            Write-Log "pnpm安装完成" "Success"
+        }
+        catch {
+            Write-Log "pnpm安装失败: $($_.Exception.Message)" "Error"
+            throw
+        }
     }
 }
 
 # 构建项目
 function Build-Project {
     Write-Log "正在安装项目依赖..."
-    pnpm install
-    
-    Write-Log "正在构建生产版本..."
-    pnpm run build
-    
-    if (Test-Path "./dist") {
-        Write-Log "项目构建完成" "Success"
-        return $true
-    } else {
-        Write-Log "项目构建失败" "Error"
+    try {
+        pnpm install
+        
+        Write-Log "正在构建生产版本..."
+        pnpm run build
+        
+        if (Test-Path "./dist") {
+            Write-Log "项目构建完成" "Success"
+            return $true
+        } else {
+            Write-Log "项目构建失败" "Error"
+            return $false
+        }
+    }
+    catch {
+        Write-Log "项目构建失败: $($_.Exception.Message)" "Error"
         return $false
     }
 }
@@ -162,7 +186,7 @@ function Configure-IIS {
         New-Website -Name "LC-VR-Monitor" -Port $Port -IPAddress $IPAddress -PhysicalPath $sitePath
         
         # 创建web.config文件
-        $webConfigContent = @"
+        $webConfigContent = @'
 <?xml version="1.0" encoding="utf-8"?>
 <configuration>
   <system.webServer>
@@ -200,7 +224,7 @@ function Configure-IIS {
     </httpCompression>
   </system.webServer>
 </configuration>
-"@
+'@
         
         $webConfigPath = Join-Path $sitePath "web.config"
         $webConfigContent | Out-File -FilePath $webConfigPath -Encoding utf8
@@ -241,9 +265,9 @@ http {
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
     
-         server {
-         listen $IPAddress`:$Port;
-         server_name $IPAddress;
+    server {
+        listen $IPAddress`:$Port;
+        server_name $IPAddress;
         root $($PSScriptRoot.Replace('\', '/').Replace(':', ''))/dist;
         index index.html;
 
