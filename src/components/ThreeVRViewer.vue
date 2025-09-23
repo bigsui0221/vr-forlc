@@ -198,7 +198,7 @@ const props = defineProps({
   },
   reservoirName: {
     type: String,
-    default: "测试水库",
+    default: "",
   },
 });
 
@@ -273,23 +273,41 @@ const createHotspotPosition = (xPercent, yPercent, zPercent) => ({
 
 // 根据水库名称初始化场景
 const initializeScenes = () => {
-  const scenes = getVRScenesForReservoir(props.reservoirName);
+  console.log("🔧 initializeScenes() 开始执行");
+  console.log("📝 传入的水库名称:", props.reservoirName);
+  console.log("📝 水库名称类型:", typeof props.reservoirName);
+  console.log("📝 水库名称长度:", props.reservoirName?.length || "undefined");
 
-  hdrScenes.value = scenes.map((scene) => ({
-    ...scene,
-    hotspots: scene.hotspots.map((hotspot) => ({
-      ...hotspot,
-      position: createHotspotPosition(
-        hotspot.position.x,
-        hotspot.position.y,
-        hotspot.position.z
-      ),
-    })),
-  }));
+  const scenes = getVRScenesForReservoir(props.reservoirName);
+  console.log(
+    "🎬 getVRScenesForReservoir 返回的场景数量:",
+    scenes?.length || 0
+  );
+  console.log("🎬 返回的场景详情:", scenes);
+
+  hdrScenes.value = scenes.map((scene, index) => {
+    console.log(`🎭 处理场景 ${index}:`, scene.name, "路径:", scene.path);
+    return {
+      ...scene,
+      hotspots: scene.hotspots.map((hotspot) => ({
+        ...hotspot,
+        position: createHotspotPosition(
+          hotspot.position.x,
+          hotspot.position.y,
+          hotspot.position.z
+        ),
+      })),
+    };
+  });
 
   console.log(
-    `为 ${props.reservoirName} 加载了 ${hdrScenes.value.length} 个VR场景`
+    `✅ 为 ${props.reservoirName} 加载了 ${hdrScenes.value.length} 个VR场景`
   );
+
+  // 输出每个场景的详细信息
+  hdrScenes.value.forEach((scene, index) => {
+    console.log(`🎯 场景${index}: ${scene.name} → ${scene.path}`);
+  });
 
   // 检查是否需要优化
   hdrScenes.value.forEach((scene) => {
@@ -413,7 +431,18 @@ const preloadImage = async (imagePath) => {
 
 // 加载场景（包含HDR和热点）
 const loadScene = async (sceneIndex) => {
-  if (!hdrScenes.value[sceneIndex] || isTransitioning) return;
+  console.log(`🎮 loadScene(${sceneIndex}) 被调用`);
+  console.log(`🎮 当前hdrScenes数量: ${hdrScenes.value?.length || 0}`);
+  console.log(`🎮 请求的场景索引: ${sceneIndex}`);
+  console.log(
+    `🎮 hdrScenes.value[${sceneIndex}]:`,
+    hdrScenes.value[sceneIndex]
+  );
+
+  if (!hdrScenes.value[sceneIndex] || isTransitioning) {
+    console.warn(`⚠️ loadScene 终止: 场景不存在或正在转换中`);
+    return;
+  }
 
   isTransitioning = true;
   isLoading.value = true;
@@ -422,6 +451,9 @@ const loadScene = async (sceneIndex) => {
 
   currentSceneIndex.value = sceneIndex;
   const targetScene = hdrScenes.value[sceneIndex];
+
+  console.log(`🎯 即将加载场景: ${targetScene.name}`);
+  console.log(`🎯 场景文件路径: ${targetScene.path}`);
 
   try {
     // 清除现有热点
@@ -1302,12 +1334,16 @@ watch(
   () => props.isVisible,
   async (newValue) => {
     if (newValue) {
+      console.log("👁️ ThreeVRViewer 变为可见，开始初始化");
+      console.log("👁️ 当前props.reservoirName:", props.reservoirName);
       await nextTick();
 
       // 初始化VR场景配置
+      console.log("🚀 开始调用 initializeScenes()");
       initializeScenes();
 
       setTimeout(() => {
+        console.log("🚀 开始调用 initThreeScene()");
         initThreeScene();
         // 添加键盘事件监听到canvas和window
         const canvas = renderer?.domElement;

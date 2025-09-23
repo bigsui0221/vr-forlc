@@ -469,6 +469,18 @@ const showDataCharts = () => {
 const showVRView = () => {
   showChartsViewer.value = false;
   showThreeVRViewer.value = true;
+
+  // 🔧 确保有水库名称，如果没有则使用默认值
+  if (
+    !selectedReservoirName.value ||
+    selectedReservoirName.value.trim() === ""
+  ) {
+    console.warn("⚠️ selectedReservoirName为空，使用默认水库名称");
+    selectedReservoirName.value = reservoirData.value?.name || "测试水库1";
+  }
+
+  console.log("🥽 启动VR查看器，水库名称:", selectedReservoirName.value);
+
   // 清理图表实例以释放内存
   cleanupCharts();
 };
@@ -1083,6 +1095,10 @@ function restoreOriginalView() {
 function showReservoirDetails(name, coordinates) {
   // 显示侧边栏
   showSidePanel.value = true;
+
+  // 🔧 修复：设置选中的水库名称，供VR查看器使用
+  selectedReservoirName.value = name;
+  console.log("🎯 设置selectedReservoirName:", name);
 
   // 生成随机水库数据
   const capacity = (Math.random() * 1000 + 100).toFixed(0);

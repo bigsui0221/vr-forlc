@@ -295,16 +295,27 @@ const vrImageFiles = [{
 
 // 根据水库名称获取VR场景配置
 export function getVRScenesForReservoir(reservoirName) {
+  // 处理空字符串或未定义的情况
+  if (!reservoirName || reservoirName.trim() === '') {
+    console.warn('水库名称为空，使用默认配置');
+    const config = vrConfig.reservoirScenes.default;
+    return config.scenes;
+  }
+
   // 如果是测试水库，按照1-2-3-4循环调用
   if (reservoirName.startsWith('测试水库')) {
     // 提取测试水库编号
-    const reservoirNumber = parseInt(reservoirName.replace('测试水库', '')) || 1;
+    const numberMatch = reservoirName.match(/测试水库(\d+)/);
+    const reservoirNumber = numberMatch ? parseInt(numberMatch[1]) : 1;
+
+    // 如果没有数字（如"测试水库"），给一个随机编号避免都使用同一个
+    const finalNumber = numberMatch ? reservoirNumber : Math.floor(Math.random() * 4) + 1;
 
     // 计算VR图像索引：1-2-3-4循环
-    const imageIndex = (reservoirNumber - 1) % 4;
+    const imageIndex = (finalNumber - 1) % 4;
     const vrImage = vrImageFiles[imageIndex];
 
-    console.log(`${reservoirName} 使用VR图像: ${vrImage.path} (循环位置: ${imageIndex + 1})`);
+    console.log(`${reservoirName} (编号: ${finalNumber}) 使用VR图像: ${vrImage.path} (循环位置: ${imageIndex + 1})`);
 
     // 生成场景配置
     return [{
@@ -453,4 +464,30 @@ export function getPreloadConfig() {
 // 获取缓存配置
 export function getCacheConfig() {
   return vrConfig.cacheConfig;
+}
+
+// 调试函数：测试VR资源循环分配
+export function testVRResourceAllocation() {
+  console.log('\n🔍 VR资源循环分配测试:');
+  console.log('='.repeat(50));
+
+  for (let i = 1; i <= 10; i++) {
+    const reservoirName = `测试水库${i}`;
+    const scenes = getVRScenesForReservoir(reservoirName);
+    const vrImage = scenes[0].path;
+    const imageNumber = vrImage.match(/\/vr-images\/(\d+)\.hdr/)[1];
+    console.log(`${reservoirName} → ${vrImage} (VR图像${imageNumber})`);
+  }
+
+  console.log('\n📊 预期结果:');
+  console.log('测试水库1,5,9... → 1.hdr');
+  console.log('测试水库2,6,10... → 2.hdr');
+  console.log('测试水库3,7,11... → 3.hdr');
+  console.log('测试水库4,8,12... → 4.hdr');
+  console.log('='.repeat(50));
+}
+
+// 在开发环境下提供全局调试函数
+if (typeof window !== 'undefined') {
+  window.testVRAllocation = testVRResourceAllocation;
 }
