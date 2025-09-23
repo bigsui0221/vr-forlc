@@ -7,7 +7,27 @@
       </div>
 
       <div class="three-vr-content">
-        <div ref="threeContainer" class="three-vr-viewer"></div>
+        <div ref="threeContainer" class="three-vr-viewer">
+          <!-- 加载遮罩层 -->
+          <div v-if="isLoading" class="loading-overlay">
+            <div class="loading-content">
+              <div class="loading-spinner"></div>
+              <div class="loading-text">{{ loadingText }}</div>
+              <div v-if="loadingProgress > 0" class="loading-progress">
+                <div class="progress-bar">
+                  <div
+                    class="progress-fill"
+                    :style="{ width: loadingProgress + '%' }"
+                  ></div>
+                </div>
+                <div class="progress-text">{{ loadingProgress }}%</div>
+              </div>
+              <div v-if="loadingError" class="loading-error">
+                {{ loadingError }}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- 移动控制提示 -->
         <div class="movement-hint">
@@ -163,6 +183,12 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import * as THREE from "three";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import {
+  getVRScenesForReservoir,
+  getOptimizedImagePath,
+  isOptimizationNeeded,
+  getPreloadConfig,
+} from "../config/vrConfig.js";
 
 // Props
 const props = defineProps({
@@ -229,6 +255,15 @@ const maxMovePercent = 0.6; // 最大移动距离为场景的60%
 const moveSpeed = sceneRadius * moveSpeedPercent; // 10个单位
 const maxMoveDistance = sceneRadius * maxMovePercent; // 300个单位
 
+// 响应式数据 - 加载状态
+const isLoading = ref(false);
+const loadingProgress = ref(0);
+const loadingText = ref("");
+const loadingError = ref("");
+
+// VR场景数据 - 动态加载
+const hdrScenes = ref([]);
+
 // HDR场景数据 - 使用百分比定位热点
 const createHotspotPosition = (xPercent, yPercent, zPercent) => ({
   x: sceneRadius * xPercent,
@@ -236,74 +271,41 @@ const createHotspotPosition = (xPercent, yPercent, zPercent) => ({
   z: sceneRadius * zPercent,
 });
 
-const hdrScenes = [
-  {
-    id: 0,
-    name: "水库HDR全景",
-    path: "/vr-images/vr.hdr",
-    hotspots: [
-      {
-        id: 1,
-        position: createHotspotPosition(0.6, 0, -0.8), // 更远的前往监测设施
-        targetScene: 1,
-        title: "前往监测设施",
-        icon: "🏭",
-        teleportPosition: { x: 0, y: 0, z: -150 }, // 传送到的位置
-      },
-      {
-        id: 2,
-        position: createHotspotPosition(-0.7, 0.1, 0.6), // 更远的观景点
-        targetScene: 0,
-        title: "观景点",
-        icon: "🌊",
-        teleportPosition: { x: -100, y: 20, z: 80 },
-      },
-      {
-        id: 3,
-        position: createHotspotPosition(0, 0.3, 0.9), // 更远的高空视角
-        targetScene: 0,
-        title: "高空视角",
-        icon: "🦅",
-        teleportPosition: { x: 0, y: 120, z: 200 },
-      },
-    ],
-  },
-  {
-    id: 1,
-    name: "监测设施HDR",
-    path: "/vr-images/vr.hdr",
-    hotspots: [
-      {
-        id: 4,
-        position: createHotspotPosition(0, 0, -0.6), // 返回水库
-        targetScene: 0,
-        title: "返回水库",
-        icon: "🏞️",
-        teleportPosition: { x: 0, y: 0, z: 0 }, // 回到原点
-      },
-      {
-        id: 5,
-        position: createHotspotPosition(0.8, -0.1, 0.3), // 更远的设备近景
-        targetScene: 1,
-        title: "设备近景",
-        icon: "⚙️",
-        teleportPosition: { x: 150, y: -20, z: 50 },
-      },
-      {
-        id: 6,
-        position: createHotspotPosition(-0.6, 0.2, -0.4), // 更远的控制室
-        targetScene: 1,
-        title: "控制室",
-        icon: "🖥️",
-        teleportPosition: { x: -100, y: 40, z: -80 },
-      },
-    ],
-  },
-];
+// 根据水库名称初始化场景
+const initializeScenes = () => {
+  const scenes = getVRScenesForReservoir(props.reservoirName);
+
+  hdrScenes.value = scenes.map((scene) => ({
+    ...scene,
+    hotspots: scene.hotspots.map((hotspot) => ({
+      ...hotspot,
+      position: createHotspotPosition(
+        hotspot.position.x,
+        hotspot.position.y,
+        hotspot.position.z
+      ),
+    })),
+  }));
+
+  console.log(
+    `为 ${props.reservoirName} 加载了 ${hdrScenes.value.length} 个VR场景`
+  );
+
+  // 检查是否需要优化
+  hdrScenes.value.forEach((scene) => {
+    if (isOptimizationNeeded(scene)) {
+      console.warn(
+        `场景 "${scene.name}" 需要优化，文件大小: ${scene.fileSize}`
+      );
+    }
+  });
+};
 
 // 计算当前场景
 const currentScene = computed(
-  () => hdrScenes[currentSceneIndex.value] || hdrScenes[0]
+  () =>
+    hdrScenes.value[currentSceneIndex.value] ||
+    hdrScenes.value[0] || { name: "加载中..." }
 );
 
 // 初始化Three.js场景
@@ -366,49 +368,126 @@ const initThreeScene = () => {
   animate();
 };
 
-// 加载场景（包含HDR和热点）
-const loadScene = (sceneIndex) => {
-  if (!hdrScenes[sceneIndex] || isTransitioning) return;
+// 预加载缓存
+const imageCache = new Map();
+const preloadConfig = getPreloadConfig();
 
-  isTransitioning = true;
-  currentSceneIndex.value = sceneIndex;
-  const targetScene = hdrScenes[sceneIndex];
+// 预加载图像
+const preloadImage = async (imagePath) => {
+  if (imageCache.has(imagePath)) {
+    console.log(`使用缓存图像: ${imagePath}`);
+    return imageCache.get(imagePath);
+  }
 
-  // 清除现有热点
-  clearHotspots();
+  return new Promise((resolve, reject) => {
+    const loader = new RGBELoader();
+    loader.setDataType(THREE.HalfFloatType);
 
-  // 加载HDR纹理
-  if (loader && sphere) {
+    const startTime = Date.now();
+
     loader.load(
-      targetScene.path,
+      imagePath,
       (texture) => {
+        const loadTime = Date.now() - startTime;
+        console.log(`图像 ${imagePath} 加载完成，耗时: ${loadTime}ms`);
+
         texture.mapping = THREE.EquirectangularReflectionMapping;
-        sphere.material.map = texture;
-        sphere.material.needsUpdate = true;
-
-        // 创建热点
-        createHotspots(targetScene.hotspots);
-
-        // 加载标记点
-        loadMarkersForScene(sceneIndex);
-
-        // 重置相机位置
-        resetCameraPosition();
-
-        isTransitioning = false;
-        console.log(`场景 ${targetScene.name} 加载成功`);
+        imageCache.set(imagePath, texture);
+        resolve(texture);
       },
       (progress) => {
-        console.log(
-          "场景加载进度:",
-          Math.round((progress.loaded / progress.total) * 100) + "%"
-        );
+        if (progress.total > 0) {
+          const percent = Math.round((progress.loaded / progress.total) * 100);
+          loadingProgress.value = percent;
+          loadingText.value = `加载中... ${percent}%`;
+        }
       },
       (error) => {
-        console.error("场景加载失败:", error);
-        isTransitioning = false;
+        console.error(`图像加载失败: ${imagePath}`, error);
+        loadingError.value = `加载失败: ${error.message}`;
+        reject(error);
       }
     );
+  });
+};
+
+// 加载场景（包含HDR和热点）
+const loadScene = async (sceneIndex) => {
+  if (!hdrScenes.value[sceneIndex] || isTransitioning) return;
+
+  isTransitioning = true;
+  isLoading.value = true;
+  loadingProgress.value = 0;
+  loadingError.value = "";
+
+  currentSceneIndex.value = sceneIndex;
+  const targetScene = hdrScenes.value[sceneIndex];
+
+  try {
+    // 清除现有热点
+    clearHotspots();
+
+    // 显示加载信息
+    loadingText.value = `正在加载 ${targetScene.name}...`;
+
+    // 优化警告
+    if (isOptimizationNeeded(targetScene)) {
+      console.warn(
+        `警告: ${targetScene.name} (${targetScene.fileSize}) 文件较大，可能影响加载速度`
+      );
+    }
+
+    // 获取优化后的图像路径
+    const optimizedPath = getOptimizedImagePath(targetScene.path);
+
+    // 预加载图像
+    const texture = await preloadImage(optimizedPath);
+
+    // 应用纹理
+    if (sphere && sphere.material) {
+      sphere.material.map = texture;
+      sphere.material.needsUpdate = true;
+    }
+
+    // 创建热点
+    createHotspots(targetScene.hotspots);
+
+    // 加载标记点
+    loadMarkersForScene(sceneIndex);
+
+    // 重置相机位置
+    resetCameraPosition();
+
+    loadingText.value = "加载完成";
+    console.log(`场景 ${targetScene.name} 加载成功`);
+
+    // 延迟隐藏加载界面
+    setTimeout(() => {
+      isLoading.value = false;
+    }, 500);
+  } catch (error) {
+    console.error("场景加载失败:", error);
+    loadingError.value = `加载失败: ${error.message}`;
+
+    // 尝试加载备用图像
+    try {
+      loadingText.value = "正在加载备用图像...";
+      const fallbackTexture = await preloadImage("/vr-images/2.hdr");
+      if (sphere && sphere.material) {
+        sphere.material.map = fallbackTexture;
+        sphere.material.needsUpdate = true;
+      }
+      loadingText.value = "已加载备用图像";
+    } catch (fallbackError) {
+      loadingError.value = "所有图像加载失败";
+      console.error("备用图像也加载失败:", fallbackError);
+    }
+
+    setTimeout(() => {
+      isLoading.value = false;
+    }, 1000);
+  } finally {
+    isTransitioning = false;
   }
 };
 
@@ -876,7 +955,7 @@ const animateHotspots = () => {
 
 // 切换HDR场景
 const switchHDRScene = (index) => {
-  if (hdrScenes[index] && !isTransitioning) {
+  if (hdrScenes.value[index] && !isTransitioning) {
     loadScene(index);
   }
 };
@@ -1224,6 +1303,10 @@ watch(
   async (newValue) => {
     if (newValue) {
       await nextTick();
+
+      // 初始化VR场景配置
+      initializeScenes();
+
       setTimeout(() => {
         initThreeScene();
         // 添加键盘事件监听到canvas和window
@@ -1239,13 +1322,37 @@ watch(
         // 加载所有标记点
         loadAllMarkers();
 
-        console.log("VR查看器已启动，键盘控制和全屏功能已激活");
+        console.log(`VR查看器已启动 - ${props.reservoirName}`);
+        console.log("键盘控制和全屏功能已激活");
+
+        // 预加载下一个场景（可选）
+        if (hdrScenes.value.length > 1 && preloadConfig.enabled) {
+          setTimeout(() => {
+            preloadNextScene();
+          }, 2000);
+        }
       }, 100);
     } else {
       cleanup();
     }
   }
 );
+
+// 预加载下一个场景
+const preloadNextScene = async () => {
+  if (hdrScenes.value.length > 1) {
+    const nextIndex = (currentSceneIndex.value + 1) % hdrScenes.value.length;
+    const nextScene = hdrScenes.value[nextIndex];
+
+    try {
+      console.log(`预加载下一个场景: ${nextScene.name}`);
+      await preloadImage(getOptimizedImagePath(nextScene.path));
+      console.log(`预加载完成: ${nextScene.name}`);
+    } catch (error) {
+      console.warn(`预加载失败: ${nextScene.name}`, error);
+    }
+  }
+};
 
 // 生命周期
 onMounted(() => {
@@ -1348,6 +1455,102 @@ onUnmounted(() => {
   background: #000;
   min-height: 300px;
   position: relative;
+}
+
+/* 加载遮罩层样式 */
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(5px);
+}
+
+.loading-content {
+  text-align: center;
+  color: white;
+  padding: 40px;
+}
+
+.loading-spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(74, 144, 226, 0.3);
+  border-top: 4px solid #4a90e2;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 20px;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 15px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.loading-progress {
+  margin-top: 20px;
+}
+
+.progress-bar {
+  width: 200px;
+  height: 8px;
+  background: rgba(74, 144, 226, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0 auto 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a90e2, #74b9ff);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  animation: progress-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes progress-glow {
+  0% {
+    box-shadow: 0 0 5px rgba(74, 144, 226, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(74, 144, 226, 0.8);
+  }
+}
+
+.progress-text {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+}
+
+.loading-error {
+  margin-top: 15px;
+  padding: 10px 15px;
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.4);
+  border-radius: 6px;
+  color: #ff6b6b;
+  font-size: 14px;
+  max-width: 300px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .movement-hint {

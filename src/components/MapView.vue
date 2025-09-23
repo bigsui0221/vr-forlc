@@ -297,6 +297,11 @@ import LineString from "ol/geom/LineString";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Style, Icon, Fill, Stroke, Circle, Text } from "ol/style";
+import {
+  mapConfig,
+  getServiceUrl,
+  validateApiKey,
+} from "../config/mapConfig.js";
 
 let map = null;
 let radiationLayer = null; // 辐射区域图层
@@ -797,23 +802,77 @@ window.showDataChart = (reservoirName) => {
 
 // 初始化地图
 function initMap() {
-  map = new Map({
-    target: "map",
-    layers: [
-      // 底图：奥维卫星地图
+  const layers = [];
+
+  // 检查天地图API密钥是否配置
+  if (validateApiKey()) {
+    console.log("使用天地图卫星地图");
+
+    // 天地图卫星影像底图
+    const satelliteUrl = getServiceUrl("satellite");
+    if (satelliteUrl) {
+      layers.push(
+        new TileLayer({
+          source: new XYZ({
+            url: satelliteUrl,
+            crossOrigin: "anonymous",
+          }),
+          opacity: mapConfig.services.satellite.opacity,
+        })
+      );
+    }
+
+    // 天地图卫星影像注记（地名标注）
+    const annotationUrl = getServiceUrl("satelliteAnnotation");
+    if (annotationUrl) {
+      layers.push(
+        new TileLayer({
+          source: new XYZ({
+            url: annotationUrl,
+            crossOrigin: "anonymous",
+          }),
+          opacity: mapConfig.services.satelliteAnnotation.opacity,
+        })
+      );
+    }
+  } else {
+    // 备用方案：使用高德地图
+    console.warn("天地图API密钥未配置，使用高德地图作为备用底图");
+    console.info("请在 src/config/mapConfig.js 中配置您的天地图API密钥");
+
+    layers.push(
       new TileLayer({
         source: new XYZ({
-          url: "https://webst0{1-4}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+          url: mapConfig.fallbackMaps.gaode,
           crossOrigin: "anonymous",
         }),
         opacity: 1.0,
-      }),
-    ],
+      })
+    );
+  }
+
+  // 如果没有有效的图层，使用OpenStreetMap作为最后备用
+  if (layers.length === 0) {
+    console.warn("所有地图服务不可用，使用OpenStreetMap作为备用底图");
+    layers.push(
+      new TileLayer({
+        source: new XYZ({
+          url: mapConfig.fallbackMaps.osm,
+          crossOrigin: "anonymous",
+        }),
+        opacity: 1.0,
+      })
+    );
+  }
+
+  map = new Map({
+    target: "map",
+    layers: layers,
     view: new View({
-      center: fromLonLat(liChuanCoordinates), // 设置中心点为利川
-      zoom: 10, // 恢复正常缩放级别
-      minZoom: 5,
-      maxZoom: 18, // OpenStreetMap支持高缩放级别
+      center: fromLonLat(mapConfig.defaultView.center), // 使用配置的利川坐标
+      zoom: mapConfig.defaultView.zoom,
+      minZoom: mapConfig.defaultView.minZoom,
+      maxZoom: mapConfig.defaultView.maxZoom,
     }),
   });
 }
